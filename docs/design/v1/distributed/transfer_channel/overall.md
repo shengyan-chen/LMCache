@@ -15,8 +15,9 @@ a handshake, and can then read arbitrary `(offset, size)` regions out of the
 remote peer's L1 buffer into its own. Only **reads** are supported today (a peer
 pulls data from a remote; it never pushes).
 
-The abstraction is transport-agnostic; the only implementation today is
-[`nixl`](#nixl-implementation) (RDMA/UCX via the NIXL bindings).
+The abstraction is transport-agnostic. Implementations include
+[`nixl`](#nixl-implementation), `mooncake_te`, and the optional
+[`hixl`](#hixl-integration) backend provided by LMCache-Ascend.
 
 ## Architecture Overview
 
@@ -127,7 +128,7 @@ typically obtained from `L1MemoryManager.get_l1_memory_desc()`.
    `succeeded_mask` holds a per-object success flag aligned with the submitted
    addresses (all `True` on success, all `False` on error).
 
-> **Alignment contract.** Object offsets must be aligned to the registered
+> **NIXL alignment contract.** Object offsets must be aligned to the registered
 > `align_bytes`, and the reader and the peer must use the **same** `align_bytes`,
 > because the page-index math used to address the remote buffer is computed
 > against the reader's alignment but indexes the peer's page-granular descriptor
@@ -156,6 +157,33 @@ points:
   url or a blocked port therefore raises a clear `TimeoutError` instead of
   hanging forever. The server's `_serve_loop` polls with a 1 s timeout so it can
   observe shutdown.
+
+## HIXL integration
+
+`impl/hixl_impl.py` registers a lightweight factory under `"hixl"`. Factory
+discovery does not import LMCache-Ascend or its native HIXL extension. Selecting
+`hixl` imports `lmcache_ascend.v1.mp_hixl_channel.HixlTransferChannelContext` and
+passes `l1_memory_desc`, `listen_url`, and `advertise_url` unchanged. Extra
+factory keyword arguments are accepted but unused; backend configuration is
+owned by LMCache-Ascend. No automatic fallback to another backend is performed.
+
+The Ascend Context, Server, and Client implement the public abstract interfaces.
+LMCache owns factory registration and the existing global lifecycle; Ascend owns
+memory registration, peer connections, READ tasks, and native cleanup. HIXL uses
+exact byte ranges based on the registered Host address, not NIXL page indices.
+
+An `ImportError` or `OSError` while importing the Ascend implementation becomes
+a `RuntimeError` with the original cause. Ascend separately reports native
+extension import failures. Context construction errors otherwise propagate
+unchanged; a failed factory call does not publish a global Context. Client
+close invalidates local task IDs but does not cancel or drain native reads;
+callers must coordinate memory lifetime and shutdown.
+
+The A3 H2H READ path requires compatible Host memory and the Ascend runtime;
+selecting the factory does not change the L1 allocator or build native code.
+See the [MP P2P user guide](../../../../source/mp/p2p.rst) for selection and
+dependency requirements. Target build/load and hardware validation are separate
+from source-level factory tests.
 
 ## Extending: add a new transfer channel implementation
 

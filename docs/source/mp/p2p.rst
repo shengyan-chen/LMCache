@@ -120,6 +120,29 @@ selected per server with ``--p2p-transfer-engine``.
    * - ``mooncake_te``
      - Uses Mooncake Transfer Engine for P2P transfers. It uses TCP by default
        and can use RDMA when configured through environment variables.
+   * - ``hixl``
+     - Uses the optional LMCache-Ascend implementation for direct HIXL H2H
+       READ on Ascend A3 with HIXL_CS / RoCE.
+
+HIXL through LMCache-Ascend
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Select this backend with ``--p2p-transfer-engine hixl``. It requires a compatible
+LMCache-Ascend package built with ``USE_HIXL=1`` and the matching CANN / HIXL
+runtime libraries. The lightweight factory loads the Ascend implementation only
+when selected; missing dependencies cause an explicit error with the original
+cause, without switching to another backend.
+
+Selecting ``hixl`` does not configure the L1 allocator. The initial A3 path uses
+the Ascend MP entry ``python -m lmcache_ascend.v1.mp_server`` with
+``LMCACHE_ASCEND_MP_HOST_MEMORY_ALLOCATOR=aclrt_malloc_host``, non-Lazy Mixed L1,
+and no SHM. Follow the LMCache-Ascend MP deployment instructions for the complete
+memory configuration. Set ``LMCACHE_HIXL_ENGINE_ID`` to a local, peer-reachable
+``host_ip:port``; it is separate from the Channel metadata advertise/listen URLs.
+Device selection defaults to logical device 0 and can be set with
+``LMCACHE_HIXL_DEVICE_ID``. Coordinator and peer discovery use the existing MP
+configuration. Factory availability alone does not establish target runtime
+compatibility or successful two-node transfers.
 
 Mooncake Transfer Engine
 ~~~~~~~~~~~~~~~~~~~~~~~~
